@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'TutorialChat/**'
   workflow_dispatch:  # 允许手动触发
 
 env:
@@ -31,7 +33,6 @@ jobs:
       - name: Get version
         id: version
         run: |
-          # 使用 git commit hash 的前7位作为版本号
           echo "VERSION=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "DATE=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
 
