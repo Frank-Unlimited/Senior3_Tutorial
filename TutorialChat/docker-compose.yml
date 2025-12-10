@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  frontend:
+    build: .
+    ports:
+      - "3000:80"
+    environment:
+      # 后端 API 地址（根据实际部署修改）
+      - BACKEND_URL=http://localhost:8000
+      # Gemini API Key（可选，用于普通聊天）
+      - API_KEY=
+    restart: unless-stopped
+
+# 如果需要同时部署后端，取消下面的注释
+#  backend:
+#    build: ../TutorialChat_backend
+#    ports:
+#      - "8000:8000"
+#    environment:
+#      - DOUBAO_API_KEY=${DOUBAO_API_KEY}
+#    volumes:
+#      - ../TutorialChat_backend/settings.yaml:/app/settings.yaml
+#    restart: unless-stopped

@@ -1,0 +1,5 @@
+{
+  "name": "BioTutor AI",
+  "description": "智能高中生物辅导助手，支持图片题目解析与概念讲解。",
+  "requestFramePermissions": []
+}

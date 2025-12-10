@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment files
+.env
+.env.local
+.env.*.local
+TutorialChat_backend/.env
+TutorialChat/.env.local
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kiro specs (optional - remove if you want to include)
+# .kiro/
+
+# Sensitive files
+settings.yaml
+!settings.example.yaml
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
