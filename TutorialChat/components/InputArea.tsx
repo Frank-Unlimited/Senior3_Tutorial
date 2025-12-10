@@ -122,7 +122,7 @@ const InputArea: React.FC<InputAreaProps> = ({ onSend, isLoading }) => {
               placeholder={isLoading ? "生物老师正在思考..." : "输入生物问题或上传题目图片..."}
               disabled={isLoading}
               rows={1}
-              className="w-full bg-transparent border-none focus:ring-0 resize-none max-h-32 py-2 text-[16px] placeholder-gray-400 text-slate-800"
+              className="w-full bg-transparent border-none outline-none focus:ring-0 focus:outline-none resize-none max-h-32 py-2 text-[16px] placeholder-gray-400 text-slate-800"
               style={{ minHeight: '40px' }}
             />
           </div>
