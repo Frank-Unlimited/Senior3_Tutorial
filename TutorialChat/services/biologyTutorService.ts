@@ -471,6 +471,19 @@ export async function* streamBiologyTutorResponse(
     
     // 发送文本消息
     if (lastMessage.content.trim()) {
+      // 先获取状态，判断当前阶段
+      const status = await getSessionStatus(sessionId);
+      
+      // 如果已经在辅导状态（第二阶段），直接使用流式接口发送用户消息
+      if (status.conversation_state === "tutoring") {
+        console.log("[BiologyTutor] Phase 2: Sending user message via stream:", lastMessage.content);
+        for await (const chunk of sendMessageStream(sessionId, lastMessage.content)) {
+          yield chunk;
+        }
+        return;
+      }
+      
+      // 第一阶段：使用普通消息接口
       let response: { content: string; is_final: boolean };
       try {
         response = await sendMessage(sessionId, lastMessage.content);
@@ -486,12 +499,12 @@ export async function* streamBiologyTutorResponse(
         return;
       }
       
-      // 获取状态
-      const status = await getSessionStatus(sessionId);
+      // 重新获取状态
+      const newStatus = await getSessionStatus(sessionId);
       
-      // 如果在辅导状态，等待任务完成
-      if (status.conversation_state === "tutoring") {
-        yield* waitForTutoringResults(sessionId, status, () => hasError, () => errorMessage);
+      // 如果进入辅导状态，等待任务完成
+      if (newStatus.conversation_state === "tutoring") {
+        yield* waitForTutoringResults(sessionId, newStatus, () => hasError, () => errorMessage);
       }
     }
   } finally {
@@ -615,8 +628,14 @@ async function* waitForTutoringResults(
         currentStatus.tasks.logic_chain === "completed";
       
       if (allComplete) {
-        yield "✅ 第一阶段数据收集完成！\n\n";
-        yield "现在可以开始正式辅导了~ 😊";
+        yield "✅ 分析完成！\n\n";
+        yield "正在为你准备辅导内容...\n\n";
+        
+        // 用户已经选择了辅导方式，自动开始辅导
+        // 调用流式端点开始辅导
+        for await (const chunk of sendMessageStream(sessionId, "开始辅导")) {
+          yield chunk;
+        }
         return;
       }
       
@@ -629,4 +648,188 @@ async function* waitForTutoringResults(
   }
   
   yield "\n⏰ 分析超时，请重试~";
+}
+
+
+/**
+ * Send a message with streaming response (Phase 2 tutoring)
+ * This function handles guided tutoring and direct answer modes
+ */
+export async function* sendMessageStream(
+  sessionId: string,
+  content: string
+): AsyncGenerator<string, void, unknown> {
+  try {
+    // Directly use streaming endpoint for Phase 2
+    // No need to check first - just stream
+    const response = await fetch(`${API_BASE}/session/${sessionId}/message/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    
+    if (!response.ok) {
+      const errorMsg = await parseErrorResponse(response);
+      yield `❌ **发送失败**\n\n${errorMsg}`;
+      return;
+    }
+    
+    // Process SSE stream
+    const reader = response.body?.getReader();
+    if (!reader) {
+      yield "❌ **无法读取响应流**";
+      return;
+    }
+    
+    const decoder = new TextDecoder();
+    let buffer = "";
+    
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || "";
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === 'chunk' && data.content) {
+                yield data.content;
+              } else if (data.type === 'error') {
+                yield `\n\n❌ **错误**\n\n${data.error}`;
+              } else if (data.type === 'done') {
+                return;
+              }
+            } catch (e) {
+              // Ignore parse errors
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  } catch (error: any) {
+    yield `❌ **连接失败**\n\n${error.message}\n\n请检查网络连接或后端服务是否启动。`;
+  }
+}
+
+/**
+ * Enhanced workflow that uses streaming for Phase 2
+ */
+export async function* processMessageWithStreaming(
+  sessionId: string,
+  messages: Message[],
+  onTaskUpdate?: (taskName: string, status: string, data?: any) => void
+): AsyncGenerator<string, void, unknown> {
+  if (messages.length === 0) return;
+  
+  const lastMessage = messages[messages.length - 1];
+  const hasImage = lastMessage.attachments && lastMessage.attachments.length > 0;
+  
+  // Set up error monitoring
+  let hasError = false;
+  let errorMessage = "";
+  
+  const cleanup = await monitorTasksForErrors(
+    sessionId,
+    (taskName, error) => {
+      hasError = true;
+      errorMessage = `❌ **${taskName} 失败**\n\n${error}\n\n请检查设置中的 API Key 配置。`;
+      onTaskUpdate?.(taskName, "failed", { error });
+    },
+    () => {
+      onTaskUpdate?.("session", "complete");
+    }
+  );
+  
+  try {
+    // Handle image upload (Phase 1)
+    if (hasImage && lastMessage.attachments) {
+      const attachment = lastMessage.attachments[0];
+      
+      try {
+        const uploadMessage = await uploadImage(
+          sessionId,
+          attachment.data,
+          attachment.mimeType
+        );
+        yield uploadMessage + "\n\n";
+        
+        if (hasError) {
+          yield errorMessage;
+          return;
+        }
+        
+        const response = await sendMessage(sessionId, "");
+        yield response.content;
+        
+        // Wait for tasks to start
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        const status = await getSessionStatus(sessionId);
+        const failedTasks = Object.entries(status.tasks)
+          .filter(([_, taskStatus]) => taskStatus === "failed");
+        
+        if (failedTasks.length > 0) {
+          for (const [taskName] of failedTasks) {
+            const error = status.task_errors?.[taskName] || "任务失败";
+            yield `\n\n❌ **${taskName} 失败**\n\n${error}`;
+          }
+          return;
+        }
+        
+        if (hasError) {
+          yield errorMessage;
+          return;
+        }
+      } catch (error: any) {
+        yield `❌ **上传失败**\n\n${error.message}`;
+        return;
+      }
+      
+      return;
+    }
+    
+    // Handle text message
+    if (lastMessage.content.trim()) {
+      // Get current status to determine phase
+      const status = await getSessionStatus(sessionId);
+      
+      // If in tutoring state (Phase 2), use streaming
+      if (status.conversation_state === "tutoring" || 
+          status.conversation_state === "awaiting_style") {
+        // Use streaming for Phase 2
+        for await (const chunk of sendMessageStream(sessionId, lastMessage.content)) {
+          yield chunk;
+        }
+      } else {
+        // Phase 1 - use regular message
+        try {
+          const response = await sendMessage(sessionId, lastMessage.content);
+          yield response.content;
+          
+          if (hasError) {
+            yield "\n\n" + errorMessage;
+            return;
+          }
+          
+          // Check if we need to wait for tutoring results
+          const newStatus = await getSessionStatus(sessionId);
+          if (newStatus.conversation_state === "tutoring") {
+            yield* waitForTutoringResults(sessionId, newStatus, () => hasError, () => errorMessage);
+          }
+        } catch (error: any) {
+          yield `❌ **发送失败**\n\n${error.message}`;
+          return;
+        }
+      }
+    }
+  } finally {
+    cleanup();
+  }
 }

@@ -93,7 +93,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onQuickReply }) 
                     code: ({ children }) => <code className="bg-emerald-50 px-1 rounded text-emerald-700">{children}</code>,
                   }}
                 >
-                  {displayContent}
+                  {/* 将单个换行符转换为两个换行符，让 Markdown 正确识别为段落分隔 */}
+                  {displayContent.replace(/\n/g, '  \n')}
                 </ReactMarkdown>
               )}
             </div>
